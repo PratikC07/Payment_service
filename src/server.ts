@@ -14,18 +14,21 @@ const startServer = async () => {
   try {
     let events: any;
 
-    if (env.NODE_ENV === "development") {
-      logger.info("Starting Smee client for local webhook forwarding");
-      events = smee.start();
-    }
+    // if (env.NODE_ENV === "development") {
+    //   logger.info("Starting Smee client for local webhook forwarding");
+    //   events = smee.start();
+    // }
 
     // Connect to database
     await prisma.$connect();
     logger.info("Connected to database");
 
     // Start server
-    const server = app.listen(env.PORT, () => {
-      logger.info(`🚀 Payment Service running on port ${env.PORT}`);
+    const port = Number(env.PORT) || 8080;
+    const server = app.listen(port, "0.0.0.0", () => {
+      logger.info(
+        `🚀 Payment Service running on port ${port} (bound to 0.0.0.0)`,
+      );
     });
 
     // Shutdown server
@@ -35,10 +38,10 @@ const startServer = async () => {
         logger.info("HTTP server closed.");
         await prisma.$disconnect();
         logger.info("PostgreSQL connection closed.");
-        if (events) {
-          events.close();
-          logger.info("Smee client closed.");
-        }
+        // if (events) {
+        //   events.close();
+        //   logger.info("Smee client closed.");
+        // }
         process.exit(0);
       });
     };

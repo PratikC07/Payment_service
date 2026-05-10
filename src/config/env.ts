@@ -7,7 +7,7 @@ const envSchema = z.object({
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),
-  PORT: z.coerce.number().default(3000),
+  PORT: z.coerce.number().default(8080),
   DATABASE_URL: z.string().url(),
   RAZORPAY_KEY_ID: z.string().min(1, "Razorpay Key ID is required"),
   RAZORPAY_KEY_SECRET: z.string().min(1, "Razorpay Secret is required"),
