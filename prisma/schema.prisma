@@ -1,0 +1,199 @@
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+enum PlanPeriod {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  AUTHENTICATED
+  CANCELLED
+  PAST_DUE
+  HALTED      // payment failed too many times, Razorpay stops retrying
+  COMPLETED   // all billing cycles finished successfully
+  EXPIRED     // customer never completed the auth payment in time
+}
+
+enum TransactionType {
+  AUTH    // the one-time auth payment (gets auto-refunded by Razorpay)
+  CHARGE  // recurring billing each cycle
+  REFUND  // money returned to customer
+  ADDON   // one-time upfront/setup fee
+  PRORATION // one-time upgrade-difference charge for instant plan change
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// Direction of a plan change. Only UPGRADE is allowed via /change-plan;
+// downgrades / lateral switches must use cancel + re-subscribe.
+enum ChangeDirection {
+  UPGRADE
+}
+
+// Lifecycle of a single plan-change attempt, captured for audit/finance reconciliation.
+enum PlanChangeAuditStatus {
+  INITIATED  // change-plan called; Razorpay objects created; awaiting payment
+  PAID       // proration order paid; instant access granted
+  ACTIVATED  // new sub charged at cycle end; fully transitioned
+  FAILED     // payment failed or unrecoverable error
+}
+
+// ==========================================
+// CATALOG & MASTER DATA
+// ==========================================
+model Feature {
+  id          String   @id @default(uuid())
+  featureKey  String   @unique @map("feature_key")
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  plans       PlanFeatureMapping[]
+
+  @@map("features")
+}
+
+model Plan {
+  id             String       @id @default(uuid())
+  name           String
+  description    String?      @map("description")
+  razorpayPlanId String       @unique @map("razorpay_plan_id")
+  priceInPaise   Int          @map("price_in_paise")
+  currency       String       @default("INR") @map("currency")
+  period         PlanPeriod   @map("period")
+  interval       Int          @default(1) @map("interval")
+  totalCount     Int          @map("total_count")
+  tier           Int          @default(0) @map("tier")
+  isActive       Boolean      @default(true) @map("is_active")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  features       PlanFeatureMapping[]
+  subscriptions  Subscription[]
+
+  @@map("plans")
+}
+
+model PlanFeatureMapping {
+  planId    String @map("plan_id")
+  featureId String @map("feature_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  plan      Plan    @relation(fields: [planId], references: [id])
+  feature   Feature @relation(fields: [featureId], references: [id])
+
+  @@id([planId, featureId])
+  @@map("plan_features_mapping")
+}
+
+// ==========================================
+// CUSTOMER DATA & LEDGER
+// ==========================================
+model Subscription {
+  id            String             @id @default(uuid())
+  userId        String             @map("user_id")
+  noshId        String             @map("nosh_id")
+  planId        String             @map("plan_id")
+  razorpaySubId String             @unique @map("razorpay_sub_id")
+  status        SubscriptionStatus @default(PENDING)
+  periodStart   DateTime?          @map("period_start")
+  periodEnd     DateTime?          @map("period_end")
+  cancelledAt   DateTime?          @map("cancelled_at")
+  cancelReason  String?            @map("cancel_reason")
+
+  replacesSubscriptionId String? @unique @map("replaces_subscription_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  plan         Plan          @relation(fields: [planId], references: [id])
+  transactions Transaction[]
+
+  @@index([userId])
+  @@index([noshId])
+  @@index([status])
+  @@index([planId])
+  @@map("subscriptions")
+}
+
+model Transaction {
+  id                String            @id @default(uuid())
+  userId            String            @map("user_id")
+  subscriptionId    String?           @map("subscription_id")
+  razorpayOrderId   String?           @unique @map("razorpay_order_id")
+  razorpayPaymentId String?           @unique @map("razorpay_pay_id")
+  amountInPaise     Int               @map("amount_in_paise")
+  currency          String            @default("INR") @map("currency")
+  type              TransactionType   @map("type")
+  status            TransactionStatus @default(PENDING)
+  failureReason     String?           @map("failure_reason")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  subscription      Subscription?     @relation(fields: [subscriptionId], references: [id])
+
+  @@index([userId])
+  @@map("transactions")
+}
+
+// ==========================================
+// AUDIT TRAIL
+// ==========================================
+
+
+model PlanChangeAudit {
+  id                   String                @id @default(uuid())
+  userId               String                @map("user_id")
+  fromSubscriptionId   String                @map("from_subscription_id")
+  toSubscriptionId     String?               @map("to_subscription_id")
+  fromPlanId           String                @map("from_plan_id")
+  toPlanId             String                @map("to_plan_id")
+  direction            ChangeDirection       @map("direction")
+  chargeAmountInPaise  Int                   @default(0) @map("charge_amount_in_paise")
+  daysRemaining        Int                   @map("days_remaining")
+  // The Razorpay one-time order created for the proration charge (only on UPGRADE w/ charge).
+  razorpayOrderId      String?               @unique @map("razorpay_order_id")
+  // Idempotency key supplied by the client; prevents duplicate audit rows on retries.
+  idempotencyKey       String?               @unique @map("idempotency_key")
+  status               PlanChangeAuditStatus @default(INITIATED)
+  effectiveAt          DateTime?             @map("effective_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([fromSubscriptionId])
+  @@index([status])
+  @@map("plan_change_audits")
+}
+
+model WebhookLog {
+  id              String   @id @default(uuid())
+  razorpayEventId String   @unique @map("razorpay_event_id")
+  eventType       String   @map("event_type")
+  payload         Json
+  processed       Boolean  @default(false)
+  retryCount      Int      @default(0) @map("retry_count")
+  processingError String?  @map("processing_error")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("webhook_logs")
+}
