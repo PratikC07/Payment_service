@@ -88,10 +88,14 @@ app.get("/health", async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.status(200).json({ status: "UP", timestamp: new Date().toISOString() });
-  } catch {
-    res
-      .status(503)
-      .json({ status: "DOWN", timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error("Health check DB error:", error);
+    // Send a 200 so DO doesn't hide the response, but show the error message!
+    res.status(200).json({
+      status: "DOWN",
+      errorName: (error as Error)?.name as string,
+      errorMessage: (error as Error)?.message as string,
+    });
   }
 });
 
