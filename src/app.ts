@@ -19,6 +19,14 @@ dotenv.config();
 
 const app = express();
 
+// 1. MUST ADD THIS: Tell Express it is behind DigitalOcean's proxy
+app.set("trust proxy", 1);
+
+// 2. MUST ADD THIS: A root route so DigitalOcean knows the app is healthy
+app.get("/", (req, res) => {
+  res.status(200).send("Payment Service is Live");
+});
+
 const allowedOrigins = env.ALLOWED_ORIGINS.split(",").map((o) => o.trim());
 
 const corsOptions: CorsOptions = {
